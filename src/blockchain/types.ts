@@ -18,6 +18,8 @@ export interface InjectionResult {
   chain: string;
   method: string;
   timestamp: number;
+  paidWei: string;
+  provider: string;
 }
 
 export interface VerificationResult {
@@ -73,6 +75,8 @@ export interface InjectionRecord {
   createdAt: Date;
   completedAt?: Date;
   errorMessage?: string;
+  paidWei?: string;
+  provider?: string;
 }
 
 export interface PricingCalculation {

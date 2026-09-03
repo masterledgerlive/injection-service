@@ -1,6 +1,13 @@
 import { ethers } from "ethers";
 import type { Chain, InjectionResult, VerificationResult } from "./types";
 
+export const BASE_SEPOLIA_CHAIN_ID = 84532;
+export const BASE_SEPOLIA_RPC_DEFAULT = "https://sepolia.base.org";
+export const DEFAULT_CHAIN = "base-sepolia";
+
+/** v0 refuses to spend on these chain IDs. */
+const MAINNET_CHAIN_IDS = new Set<number>([1, 137, 42161, 10, 8453]);
+
 /**
  * Blockchain Adapter
  * Provides unified interface to multiple blockchain networks
@@ -58,6 +65,14 @@ export class BlockchainAdapter {
         chainId: 8453,
         rpcUrl: process.env.BASE_RPC || "",
         explorerUrl: "https://basescan.org",
+        gasMultiplier: 0.2,
+        minGasPrice: 1n,
+      },
+      {
+        name: DEFAULT_CHAIN,
+        chainId: BASE_SEPOLIA_CHAIN_ID,
+        rpcUrl: process.env.BASE_SEPOLIA_RPC || BASE_SEPOLIA_RPC_DEFAULT,
+        explorerUrl: "https://sepolia.basescan.org",
         gasMultiplier: 0.2,
         minGasPrice: 1n,
       },
@@ -186,29 +201,53 @@ export class BlockchainAdapter {
   }
 
   /**
-   * Send transaction with memory data in calldata
+   * Send transaction with memory data in calldata.
+   * Native `value` pays the provider in the same tx (`to` = provider).
    */
   async injectMemoryToCalldata(
     chainName: string,
     memoryData: string,
-    recipientAddress: string
+    recipientAddress: string,
+    payAmountWei: bigint = 0n
   ): Promise<InjectionResult> {
-    const signer = this.getSigner(chainName);
     const chain = this.getChain(chainName);
+    if (MAINNET_CHAIN_IDS.has(chain.chainId)) {
+      throw new Error(
+        `Refusing to send transactions on mainnet chainId ${chain.chainId}. Use ${DEFAULT_CHAIN} (${BASE_SEPOLIA_CHAIN_ID}).`
+      );
+    }
+
+    const signer = this.getSigner(chainName);
+    const value = payAmountWei;
 
     try {
-      // Create transaction with memory data in calldata
-      const tx = await signer.sendTransaction({
+      const request = {
         to: recipientAddress,
-        value: 0n,
+        value,
         data: memoryData,
-        gasLimit: BigInt(100000), // Adjust based on data size
+      };
+
+      let gasLimit = BigInt(100000);
+      try {
+        const estimated = await signer.estimateGas(request);
+        gasLimit = estimated + estimated / 5n;
+      } catch {
+        // Keep fallback gas limit when estimate is unavailable (e.g. tests).
+      }
+
+      const tx = await signer.sendTransaction({
+        ...request,
+        gasLimit,
       });
 
       const receipt = await tx.wait();
 
       if (!receipt) {
         throw new Error("Transaction failed to be mined");
+      }
+
+      if (!receipt.hash) {
+        throw new Error("Receipt missing transaction hash");
       }
 
       return {
@@ -218,6 +257,8 @@ export class BlockchainAdapter {
         chain: chainName,
         method: "calldata-injection",
         timestamp: Date.now(),
+        paidWei: (tx.value ?? value).toString(),
+        provider: recipientAddress,
       };
     } catch (error) {
       throw new Error(
