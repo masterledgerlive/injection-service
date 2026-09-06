@@ -11,6 +11,24 @@ export interface PricingConfig {
   chainMultipliers: Record<string, number>;
 }
 
+export function loadPricingConfig(): PricingConfig {
+  const baseMultiplier = parseFloat(process.env.BASE_MULTIPLIER || "0.2");
+  return {
+    baseFeeUSD: parseFloat(process.env.BASE_FEE_USD || "0.50"),
+    dataRatePerKB: parseFloat(process.env.DATA_RATE_PER_KB || "0.10"),
+    chainMultipliers: {
+      ethereum: parseFloat(process.env.ETHEREUM_MULTIPLIER || "2.0"),
+      polygon: parseFloat(process.env.POLYGON_MULTIPLIER || "0.1"),
+      arbitrum: parseFloat(process.env.ARBITRUM_MULTIPLIER || "0.2"),
+      optimism: parseFloat(process.env.OPTIMISM_MULTIPLIER || "0.2"),
+      base: baseMultiplier,
+      "base-sepolia": parseFloat(
+        process.env.BASE_SEPOLIA_MULTIPLIER || String(baseMultiplier)
+      ),
+    },
+  };
+}
+
 export class PricingEngine {
   private config: PricingConfig;
 

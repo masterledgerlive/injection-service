@@ -1,7 +1,7 @@
 import { BaseInjectionPlugin } from "./interface";
 import type { MemoryStrand, InjectionResult, VerificationResult } from "../blockchain/types";
 import BlockchainAdapter from "../blockchain/adapter";
-import PricingEngine from "../pricing/engine";
+import PricingEngine, { loadPricingConfig } from "../pricing/engine";
 
 /**
  * Calldata Injection Plugin
@@ -15,25 +15,25 @@ export class CalldataInjectionPlugin extends BaseInjectionPlugin {
   description =
     "Injects memory strands into transaction calldata for parasitic storage";
   author = "Manus AI";
-  chains = ["ethereum", "polygon", "arbitrum", "optimism", "base"];
+  chains = [
+    "base-sepolia",
+    "ethereum",
+    "polygon",
+    "arbitrum",
+    "optimism",
+    "base",
+  ];
 
   private blockchainAdapter: BlockchainAdapter;
   private pricingEngine: PricingEngine;
 
-  constructor() {
+  constructor(
+    blockchainAdapter?: BlockchainAdapter,
+    pricingEngine?: PricingEngine
+  ) {
     super();
-    this.blockchainAdapter = new BlockchainAdapter();
-    this.pricingEngine = new PricingEngine({
-      baseFeeUSD: parseFloat(process.env.BASE_FEE_USD || "0.50"),
-      dataRatePerKB: parseFloat(process.env.DATA_RATE_PER_KB || "0.10"),
-      chainMultipliers: {
-        ethereum: parseFloat(process.env.ETHEREUM_MULTIPLIER || "2.0"),
-        polygon: parseFloat(process.env.POLYGON_MULTIPLIER || "0.1"),
-        arbitrum: parseFloat(process.env.ARBITRUM_MULTIPLIER || "0.2"),
-        optimism: parseFloat(process.env.OPTIMISM_MULTIPLIER || "0.2"),
-        base: parseFloat(process.env.BASE_MULTIPLIER || "0.2"),
-      },
-    });
+    this.blockchainAdapter = blockchainAdapter ?? new BlockchainAdapter();
+    this.pricingEngine = pricingEngine ?? new PricingEngine(loadPricingConfig());
   }
 
   async initialize(): Promise<void> {
@@ -90,11 +90,13 @@ export class CalldataInjectionPlugin extends BaseInjectionPlugin {
     // Encode memory strand into calldata
     const calldata = this.encodeMemoryToCalldata(strand);
 
-    // Inject to blockchain
+    const payAmountWei = parsePayAmountWei(options?.payAmountWei);
+
     const result = await this.blockchainAdapter.injectMemoryToCalldata(
       chain,
       calldata,
-      recipientAddress
+      recipientAddress,
+      payAmountWei
     );
 
     return result;
@@ -105,7 +107,7 @@ export class CalldataInjectionPlugin extends BaseInjectionPlugin {
     decryptionKey: string,
     options?: Record<string, any>
   ): Promise<MemoryStrand> {
-    const chain = options?.chain || "ethereum";
+    const chain = options?.chain || "base-sepolia";
 
     // Get transaction details
     const txDetails = await this.blockchainAdapter.getTransactionDetails(
@@ -155,14 +157,20 @@ export class CalldataInjectionPlugin extends BaseInjectionPlugin {
 
   async healthCheck(): Promise<boolean> {
     try {
+      let checked = false;
       for (const chain of this.chains) {
-        const provider = this.blockchainAdapter.getProvider(chain);
-        const blockNumber = await provider.getBlockNumber();
-        if (blockNumber <= 0) {
-          return false;
+        try {
+          const provider = this.blockchainAdapter.getProvider(chain);
+          const blockNumber = await provider.getBlockNumber();
+          checked = true;
+          if (blockNumber <= 0) {
+            return false;
+          }
+        } catch {
+          // Skip chains without a configured provider (v0 defaults to base-sepolia).
         }
       }
-      return true;
+      return checked;
     } catch {
       return false;
     }
@@ -261,6 +269,23 @@ export class CalldataInjectionPlugin extends BaseInjectionPlugin {
       );
     }
   }
+}
+
+function parsePayAmountWei(value: unknown): bigint {
+  if (value === undefined || value === null || value === "") {
+    return 0n;
+  }
+  if (typeof value === "bigint") {
+    if (value < 0n) {
+      throw new Error("payAmountWei must be non-negative");
+    }
+    return value;
+  }
+  const asString = String(value);
+  if (!/^[0-9]+$/.test(asString)) {
+    throw new Error("payAmountWei must be a non-negative integer");
+  }
+  return BigInt(asString);
 }
 
 export default CalldataInjectionPlugin;
